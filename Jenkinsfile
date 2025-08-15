@@ -1,5 +1,5 @@
 pipeline {
-    agent any // The pipeline will start on any available agent
+    agent any
 
     stages {
         stage('Checkout Code') {
@@ -8,19 +8,30 @@ pipeline {
                 checkout scm
             }
         }
+
         stage('Build and Run') {
-            // Use a Docker agent for this stage
             agent {
                 docker {
-                    image 'docker:latest' // Use a Docker image that has the Docker CLI
-                    args '-v /var/run/docker.sock:/var/run/docker.sock' // Mount the Docker socket
+                    image 'docker:latest' // Container with Docker CLI
+                    args """
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v ${env.WORKSPACE}:/workspace \
+                        -e HOME=/workspace
+                    """
                 }
             }
             steps {
                 echo '--- Building Docker image ---'
-                sh 'docker build -t my-app:1 .' // This will now work
-                // Add your 'docker run' or 'docker push' commands here
+                sh 'docker build -t my-app:1 /workspace'
+                // Example run
+                // sh 'docker run --rm -p 3000:3000 my-app:1'
             }
+        }
+    }
+    post {
+        always {
+            echo '--- Cleaning up ---'
+            sh 'docker system prune -f'
         }
     }
 }
