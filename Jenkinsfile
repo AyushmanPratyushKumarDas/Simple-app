@@ -8,23 +8,16 @@ pipeline {
                 checkout scm
             }
         }
-
         stage('Build and Run') {
             agent {
                 docker {
-                    image 'docker:latest' // Container with Docker CLI
-                    args """
-                        -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v ${env.WORKSPACE}:/workspace \
-                        -e HOME=/workspace
-                    """
+                    image 'docker:latest'
+                    args '-v /var/run/docker.sock:/var/run/docker.sock -u root'
                 }
             }
             steps {
                 echo '--- Building Docker image ---'
-                sh 'docker build -t my-app:1 /workspace'
-                // Example run
-                // sh 'docker run --rm -p 3000:3000 my-app:1'
+                sh 'docker build -t my-app:1 .'
             }
         }
     }
@@ -34,4 +27,4 @@ pipeline {
             sh 'docker system prune -f'
         }
     }
-}
+}                                                           
