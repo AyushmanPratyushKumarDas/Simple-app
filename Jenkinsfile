@@ -1,38 +1,39 @@
 /**
- * A simple, streamlined Jenkinsfile for building and deploying a Docker container.
+ * A simple pipeline to build a Docker image and run it as a container.
  */
 pipeline {
-    // Use any available agent that has Docker and Git installed.
+    // This pipeline will run on any available Jenkins agent.
+    // The agent MUST have Git and Docker installed.
     agent any
 
     stages {
-        // All steps are combined into a single, easy-to-follow stage.
-        stage('Build and Deploy') {
+        stage('Build and Run') {
             steps {
-                echo "--- Building the Docker image ---"
-                // The Dockerfile in your repo handles npm install.
-                // We tag the image with the unique Jenkins build number.
-                sh "docker build -t simple-app:${env.BUILD_NUMBER} ."
+                // Step 1: Check out the source code from your Git repository.
+                echo '--- Checking out code ---'
+                checkout scm
 
-                echo "--- Deploying the new container ---"
-                // Stop and remove any container with the same name to avoid conflicts.
-                sh "docker stop simple-app-container || true"
-                sh "docker rm simple-app-container || true"
+                // Step 2: Build the Docker image from your Dockerfile.
+                // The image is tagged with the Jenkins build number for uniqueness.
+                echo '--- Building Docker image ---'
+                sh "docker build -t my-app:${env.BUILD_NUMBER} ."
 
-                // Run the new container from the image we just built.
-                sh "docker run -d --name simple-app-container -p 3000:3000 simple-app:${env.BUILD_NUMBER}"
+                // Step 3: Stop and remove any old container with the same name.
+                // This prevents errors if the pipeline is run more than once.
+                echo '--- Cleaning up old containers ---'
+                sh "docker stop my-app-container || true"
+                sh "docker rm my-app-container || true"
 
-                echo "--- Verifying the running container ---"
-                sh 'sleep 5'
+                // Step 4: Run a new container from the image we just built.
+                // -d runs the container in the background.
+                // --name gives the container a consistent name.
+                // -p maps port 8080 on the server to port 3000 in the container.
+                echo '--- Starting new container ---'
+                sh "docker run -d --name my-app-container -p 8080:3000 my-app:${env.BUILD_NUMBER}"
+
+                echo '--- Done! ---'
                 sh 'docker ps'
             }
-        }
-    }
-
-    post {
-        // This block runs after the pipeline finishes.
-        always {
-            echo "Pipeline finished."
         }
     }
 }
