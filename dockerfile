@@ -1,6 +1,6 @@
 FROM node:18
 
-WORKDIR /mnt/c/Users/ASUS/Desktop/docker_files/simple-app
+WORKDIR /app
 
 COPY package*.json ./
 RUN npm install
