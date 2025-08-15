@@ -1,72 +1,123 @@
 /**
- * Corrected Jenkinsfile for a Node.js and Docker project.
+ * Improved Jenkinsfile for a Node.js and Docker project.
  *
- * This pipeline uses the "agent-per-stage" approach to ensure the correct tools
- * are available for each step.
+ * Key Features:
+ * 1. `agent none`: Forces each stage to declare its own environment for clarity.
+ * 2. Caching: Caches npm dependencies to speed up subsequent builds.
+ * 3. Git Commit Tagging: Tags Docker images with the Git commit hash for better traceability.
+ * 4. Self-Contained Stages: Uses Docker agents for both Node.js and Docker commands.
  */
 pipeline {
-    // 1. Define a global agent. This agent MUST have Docker installed and running.
-    agent any
+    // 1. Set top-level agent to 'none'.
+    // This is a best practice that forces every stage to explicitly define its
+    // execution environment, preventing accidental runs on the wrong agent.
+    agent none
 
     environment {
-        DOCKER_IMAGE = 'simple-app'
+        // Define the image name centrally
+        DOCKER_IMAGE   = 'simple-app'
         CONTAINER_NAME = 'simple-app-container'
     }
 
     stages {
-        // NOTE: The initial 'checkout' stage has been removed.
-        // Jenkins automatically checks out the code from Git before running the 'stages' block.
-
-        // 2. For Node.js tasks, run them inside a temporary Docker container that has Node.js.
         stage('Build and Test') {
+            // 2. Define a specific agent for this stage.
+            // Jenkins will start a temporary 'node:18-alpine' container
+            // and run the steps inside it.
             agent {
-                // This tells Jenkins to spin up a 'node:18-alpine' container
-                // and run the steps inside it. This container already has npm.
-                docker { image 'node:18-alpine' }
+                docker {
+                    image 'node:18-alpine'
+                    // 3. Add caching for npm dependencies.
+                    // This maps a directory from the host workspace into the container.
+                    // The 'npm install' will be much faster on subsequent runs.
+                    args '-v ${WORKSPACE}/.cache/npm:/root/.npm'
+                }
             }
             steps {
-                echo 'Installing dependencies...'
+                echo '--- Installing Dependencies (with caching) ---'
                 sh 'npm install'
 
-                echo 'Running tests...'
+                echo '--- Running Tests ---'
                 sh 'npm test'
             }
         }
 
-        // 3. For Docker tasks, run them on the main Jenkins agent (which has Docker installed).
-        stage('Docker Build') {
+        // 4. Group Docker-related tasks under a parent stage for better UI visualization.
+        stage('Build and Publish Image') {
+            // 5. Use a self-contained Docker agent for building the image.
+            // This runs steps inside a container that has the Docker client,
+            // which communicates with the host's Docker daemon via the mounted socket.
+            // This avoids the "docker: not found" error without installing Docker in the agent's PATH.
+            agent {
+                docker {
+                    image 'docker:24.0' // A recent, specific version of the Docker image
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
             steps {
                 script {
-                    echo "Building Docker image ${DOCKER_IMAGE}:${env.BUILD_ID}..."
-                    // Corrected docker.build syntax. The second argument is the build context (path).
-                    // The "-f dockerfile" part is usually not needed if your file is named "Dockerfile".
-                    docker.build("${DOCKER_IMAGE}:${env.BUILD_ID}", ".")
+                    // 6. Use the Git commit hash for the image tag for better traceability.
+                    def shortCommit = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    def taggedImage = "${DOCKER_IMAGE}:${shortCommit}"
+
+                    echo "--- Building Docker image: ${taggedImage} ---"
+                    docker.build(taggedImage, ".")
+
+                    // Optional: Push to a registry
+                    // withRegistry('https://your-registry.com', 'your-credentials-id') {
+                    //     docker.image(taggedImage).push()
+                    // }
                 }
             }
         }
 
-        stage('Docker Run') {
+        stage('Deploy') {
+            // This stage also needs to run on an agent that can execute Docker commands.
+            agent {
+                docker {
+                    image 'docker:24.0'
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
             steps {
                 script {
-                    echo "Stopping and removing old container if it exists..."
-                    // Using 'sh' is perfectly fine for these commands.
+                    def shortCommit = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    def taggedImage = "${DOCKER_IMAGE}:${shortCommit}"
+
+                    echo '--- Stopping and removing old container ---'
+                    // The '|| true' prevents the build from failing if the container doesn't exist
                     sh "docker stop ${CONTAINER_NAME} || true"
                     sh "docker rm ${CONTAINER_NAME} || true"
 
-                    echo "Running new container..."
-                    // Use docker.image().run() to run the image built in the previous stage.
-                    docker.image("${DOCKER_IMAGE}:${env.BUILD_ID}").run("--name ${CONTAINER_NAME} -p 3000:3000 -d")
+                    echo "--- Running new container from image ${taggedImage} ---"
+                    docker.image(taggedImage).run("--name ${CONTAINER_NAME} -p 3000:3000 -d")
+
+                    echo '--- Verifying container status ---'
+                    sh 'sleep 5' // Wait a few seconds for the app to start
+                    sh 'docker ps'
                 }
             }
         }
     }
 
-    // 4. The post block runs on the main agent.
     post {
+        // The 'post' block also needs an explicit agent if the top-level agent is 'none'.
         always {
-            echo "Cleaning up Docker image..."
-            // This command is fine. It ensures the built image is removed to save space.
-            sh "docker rmi ${DOCKER_IMAGE}:${env.BUILD_ID} || true"
+            agent {
+                docker {
+                    image 'docker:24.0'
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
+            steps {
+                echo '--- Post-build cleanup ---'
+                // Stop and remove the container
+                sh "docker stop ${CONTAINER_NAME} || true"
+                sh "docker rm ${CONTAINER_NAME} || true"
+
+                // Note: We don't remove the image here, as it might be the active deployment.
+                // Image cleanup is typically handled by a separate, scheduled Jenkins job.
+            }
         }
     }
 }
